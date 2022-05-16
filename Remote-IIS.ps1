@@ -39,10 +39,9 @@ Param(
     [string]$mailTo = ""
 )
 
-if ((Get-Module "WebAdministration" -ErrorAction SilentlyContinue) -eq $null){
-	Import-Module WebAdministration
-}
-
+# if ((Get-Module "WebAdministration" -ErrorAction SilentlyContinue) -eq $null){
+# 	Import-Module WebAdministration
+# }
 
 function Set-Session
 {
@@ -51,18 +50,33 @@ function Set-Session
     return New-PSSession -computername $server -credential $cred
 }
 
+function Get-AppPoolList
+{
+  $appPoolList = Get-IISAppPool | ConvertTo-Json
+  New-Object -TypeName PSCustomObject -Property @{appPoolList=$appPoolList;}
+}
+
+function Get-Site-List {
+  $siteList = get-website | Select-Object NAME,ID,STATE, PHYSICALPATH | ConvertTo-Json
+  New-Object -TypeName PSCustomObject -Property @{siteList=$siteList;}
+}
+
+function Get-Application-List 
+{
+  param (
+    [string]$siteName
+  )
+
+  $appList = Get-WebApplication -Site $siteName |ConvertTo-Json
+  New-Object -TypeName PSCustomObject -Property @{appList=$appList;}
+}
+
 # New Server Open IIS
 function Init-IIS
 {
   Enable-WindowsOptionalFeature -FeatureName IIS-ASPNET45,IIS-HttpRedirect,IIS-RequestMonitor,IIS-URLAuthorization,IIS-IPSecurity,IIS-ApplicationInit,IIS-BasicAuthentication,IIS-ManagementService,IIS-WindowsAuthentication -Online -All -NoRestart
   $count = (Get-WindowsOptionalFeature -Online -FeatureName '*IIS*').Count
   New-Object -TypeName PSCustomObject -Property @{count=$count;}
-}
-
-function Get-Applications
-{
-   $appList = Get-WebApplication |Select @{Name='Name';Expression={$_.Path.Trim('/')}} |Select -Expand Name
-   New-Object -TypeName PSCustomObject -Property @{appList=$appList;}
 }
 
 function Create-New-Site
@@ -151,11 +165,15 @@ function Set-AnonymousAuthentication
     [string]$appName,
     [bool]$value
   )
-  
+
+  $anonAuthFilter =    "/system.WebServer/security/authentication/AnonymousAuthentication"
   $anonAuth = Get-WebConfigurationProperty -filter $anonAuthFilter -name Enabled -location "$website/$appName"
-	if( $anonAuth.Value -eq $value ){
+	if( $anonAuth.Value -eq $value )
+  {
 		Write-Host "$appName Anonymous Authentication is already $value"
-	} else {
+	} 
+  else 
+  {
 		Set-WebConfigurationProperty -filter $anonAuthFilter -name Enabled -value $value -location "$website/$appName"
 		Write-Host "Anonymous Authentication now $value on $appName"
 	}
