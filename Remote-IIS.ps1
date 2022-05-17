@@ -16,6 +16,14 @@
   Update Server
   EX: ptw-crm-25
 
+.PARAMETER command
+  command
+  EX: AppPool/Site/Application
+
+.PARAMETER action
+  command
+  EX: empty/0/1/2
+
 .PARAMETER mailFrom
   Send Report Mail (From)
   EX: mail
@@ -34,14 +42,27 @@ Param(
     [Parameter(mandatory=$true)]
     [string]$server = "",
     [Parameter(mandatory=$true)]
-    [string]$mailFrom = "",
+    [string]$command = "",
     [Parameter(mandatory=$true)]
-    [string]$mailTo = ""
+    [string]$action = "",
+    [string]$param = "" #Json Format like {"siteName": "","appName":""}
 )
 
 # if ((Get-Module "WebAdministration" -ErrorAction SilentlyContinue) -eq $null){
 # 	Import-Module WebAdministration
 # }
+
+function TestServerConnection([string] $server) 
+{
+  if (test-connection -ComputerName $server -Count 1 -ErrorAction SilentlyContinue ) 
+  {
+    return $true
+  }
+  else 
+  {
+    return $false
+  }
+}
 
 function Set-Session
 {
@@ -70,6 +91,7 @@ function Get-AppPoolList
   New-Object -TypeName PSCustomObject -Property @{appPoolList=$appPoolJsonList;isSuccess=$isSuccess}
 }
 
+
 function Get-Site-List
 {
   $isSuccess = $false
@@ -78,6 +100,7 @@ function Get-Site-List
   {
     $siteList = get-website | Select-Object id,name,state,applicationPool,physicalPath,bindings,enabledProtocols,serverAutoStart
     $siteJsonList = $siteList | ConvertTo-Json
+    $isSuccess = $true;
   }
   catch
   {
@@ -85,28 +108,39 @@ function Get-Site-List
     Write-Host $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{siteList=$siteJsonList;}
+  New-Object -TypeName PSCustomObject -Property @{siteList=$siteJsonList;isSuccess=$isSuccess}
 }
 
-function Get-Application-List 
+function Get-Application-List
 {
   param (
     [string]$siteName
   )
 
-  $appList = Get-WebApplication -Site $siteName | Select-Object path,applicationPool,PhysicalPath
+  $isSuccess = $false
 
-  #Get VirtualDirectory and save in list item
-  foreach ($appItem in $appList)
+  try 
   {
-    $appName = $appItem.path.trim('/')
-    $virtualList = Get-WebVirtualDirectory -Site $siteName -Application $appName | Select-Object path,physicalPath | ConvertTo-Json #get VirtualDirectory
-    $appItem | Add-Member -MemberType NoteProperty -Name "VirtualDiretoryPath" -Value $virtualList #add prop to list
+    $appList = Get-WebApplication -Site $siteName | Select-Object path,applicationPool,PhysicalPath
+
+    #Get VirtualDirectory and save in list item
+    foreach ($appItem in $appList)
+    {
+      $appName = $appItem.path.trim('/')
+      $virtualList = Get-WebVirtualDirectory -Site $siteName -Application $appName | Select-Object path,physicalPath | ConvertTo-Json #get VirtualDirectory
+      $appItem | Add-Member -MemberType NoteProperty -Name "VirtualDiretoryPath" -Value $virtualList #add prop to list
+    }
+  
+    $appJsonList = $appList | ConvertTo-Json
+    $isSuccess = $true;
+  }
+  catch
+  {
+    Write-Host "An error occurred:"
+    Write-Host $_
   }
 
-  $appJsonList = $appList | ConvertTo-Json
-
-  New-Object -TypeName PSCustomObject -Property @{appList=appJsonList;}
+  New-Object -TypeName PSCustomObject -Property @{appList=appJsonList;isSuccess=$isSuccess}
 }
 
 # New Server Open IIS
@@ -116,6 +150,16 @@ function Init-IIS
   $count = (Get-WindowsOptionalFeature -Online -FeatureName '*IIS*').Count
   New-Object -TypeName PSCustomObject -Property @{count=$count;}
 }
+
+function Remove-Pool()
+{
+  param (
+    [string]$appPool
+  )
+
+  Remove-WebAppPool -Name $appPool
+}
+
 
 function Create-New-Site
 {
@@ -159,6 +203,15 @@ function Create-New-Site
 }
 
 
+function Remove-Site
+{
+  param(
+    [string]$siteName
+  )
+  Remove-WebSite -Name $siteName
+}
+
+
 function Create-New-Application
 {
   param(
@@ -194,6 +247,8 @@ function Remove-Application
 		Write-Host "$appName removed"
 		#IIS:\>Remove-WebApplication -Name TestApp -Site "Default Web Site"
 	}
+
+
 }
 
 function Set-AnonymousAuthentication 
@@ -245,15 +300,109 @@ function Set-AppPool
 	}
 }
 
-
-# $session = Set-Session
-
-
-# if ($session)
-# {
-#     invoke-command -session $session -scriptblock ${function:Get-Applications}
-
-#     Remove-PSSession -Session $session
-
-#     PAUSE
+#CSharp CSHelper call Bridge test
+# function CSharpBridgeTest {
+#   Start-Sleep -Seconds 5
+#   $jsonObject = "{output:{first:michael,last:chang},isSuccess:true,command:$command}";
+#   return $jsonObject
 # }
+
+# $TestObj = CSharpBridgeTest;
+# Write-Output $TestObj
+
+
+function AppPoolMaintain ([PSCustomObject] $PSObject, [PSSession] $session)
+{
+  $rtnObj = $null;
+
+  $param = $PSObject.param;
+
+  switch ($PSObject.action)
+  {
+      0 
+      {
+        $rtnObj =  invoke-command -session $session -scriptblock ${function:Remove-Pool} -ArgumentList ($param.AppPool)
+      }
+      1 
+      {
+        $rtnObj = invoke-command -session $session -scriptblock ${function:Set-AppPool} -ArgumentList ($param.siteName,$param.appName)
+      }
+      2 
+      { 
+        #TODO Revise / Set?
+      }
+      default #Get List
+      {
+        $rtnObj = invoke-command -session $session -scriptblock ${function:Get-AppPoolList}
+      }
+  }
+
+  return $rtnObj;
+}
+
+function SiteMaintain ([PSCustomObject] $PSObject, [PSSession] $session)
+{
+  $rtnObj = $null;
+
+  $param = $PSObject.param;
+
+  switch ($PSObject.action)
+  {
+      0 
+      {
+        $rtnObj =  invoke-command -session $session -scriptblock ${function:Remove-Site} -ArgumentList ($param.siteName)
+      }
+      1 
+      {
+        $rtnObj = invoke-command -session $session -scriptblock ${function:Create-New-Site} -ArgumentList ($param.basePath,$param.siteName,$param.siteFolder,$param.hostHeader,$param.ipAddress,$param.port,$param.netVersion,$param.enable32Bit,$param.classicPipelineMode)
+      }
+      2 
+      { 
+        #TODO Revise / Set?
+      }
+      default #Get List
+      {
+        $rtnObj = invoke-command -session $session -scriptblock ${function:Get-Site-List}
+      }
+  }
+
+  return $rtnObj;
+}
+
+function AppMaintain ([PSCustomObject] $PSObject, [PSSession] $session)
+{
+
+}
+
+
+$session = Set-Session
+
+
+if ($session)
+{
+    
+  #create new object save params and action pass to local function
+  $PSHash = @{
+    server   = $server
+    action   = $action
+    param  = $param | ConvertTo-Json -Compress
+  }
+
+  $PSObject = New-Object -TypeName PSObject -Property $PSHash
+  
+  $JsonObject = $null;
+  
+  switch ($command)
+  {
+      'AppPool'     { $JsonObject = AppPoolMaintain($PSObject, $session) }
+      'Site'        { $JsonObject = SiteMaintain($PSObject, $session) }
+      'Application' { $JsonObject = AppMaintain($PSObject, $session) }
+  }
+  
+
+  Write-Host $JsonObject 
+
+  Remove-PSSession -Session $session
+
+  PAUSE
+}
