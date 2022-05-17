@@ -50,15 +50,42 @@ function Set-Session
     return New-PSSession -computername $server -credential $cred
 }
 
+#ps4 may not work
 function Get-AppPoolList
 {
-  $appPoolList = Get-IISAppPool | ConvertTo-Json
-  New-Object -TypeName PSCustomObject -Property @{appPoolList=$appPoolList;}
+  $isSuccess = $false
+   
+  try 
+  {
+    $appPoolList = Get-IISAppPool | Select-Object Name,State,ManagedRuntimeVersion,ManagedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64
+    $appPoolJsonList = $appPoolList | ConvertTo-Json
+    $isSuccess = $true;
+  }
+  catch 
+  {
+    Write-Host "An error occurred:"
+    Write-Host $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{appPoolList=$appPoolJsonList;isSuccess=$isSuccess}
 }
 
-function Get-Site-List {
-  $siteList = get-website | Select-Object NAME,ID,STATE, PHYSICALPATH | ConvertTo-Json
-  New-Object -TypeName PSCustomObject -Property @{siteList=$siteList;}
+function Get-Site-List
+{
+  $isSuccess = $false
+
+  try 
+  {
+    $siteList = get-website | Select-Object id,name,state,applicationPool,physicalPath,bindings,enabledProtocols,serverAutoStart
+    $siteJsonList = $siteList | ConvertTo-Json
+  }
+  catch
+  {
+    Write-Host "An error occurred:"
+    Write-Host $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{siteList=$siteJsonList;}
 }
 
 function Get-Application-List 
@@ -67,8 +94,19 @@ function Get-Application-List
     [string]$siteName
   )
 
-  $appList = Get-WebApplication -Site $siteName |ConvertTo-Json
-  New-Object -TypeName PSCustomObject -Property @{appList=$appList;}
+  $appList = Get-WebApplication -Site $siteName | Select-Object path,applicationPool,PhysicalPath
+
+  #Get VirtualDirectory and save in list item
+  foreach ($appItem in $appList)
+  {
+    $appName = $appItem.path.trim('/')
+    $virtualList = Get-WebVirtualDirectory -Site $siteName -Application $appName | Select-Object path,physicalPath | ConvertTo-Json #get VirtualDirectory
+    $appItem | Add-Member -MemberType NoteProperty -Name "VirtualDiretoryPath" -Value $virtualList #add prop to list
+  }
+
+  $appJsonList = $appList | ConvertTo-Json
+
+  New-Object -TypeName PSCustomObject -Property @{appList=appJsonList;}
 }
 
 # New Server Open IIS
