@@ -52,6 +52,13 @@ Param(
 # 	Import-Module WebAdministration
 # }
 
+# ConvertTo-Json -Depth Dic
+[hashtable]$depthDictionary = [ordered]@{
+  AppPool3 = 4;
+  Site3 = 5;
+  Application3 = 3;
+}
+
 function TestServerConnection([string] $server) 
 {
     if (test-connection -ComputerName $server -Count 1 -ErrorAction SilentlyContinue ) 
@@ -159,7 +166,7 @@ function Get-Application-List
       {
         If ($virtualList -is [System.Management.Automation.PSCustomObject])
         {
-          $appItem | Add-Member -MemberType NoteProperty -Name "VirtualDiretoryPath" -Value ($virtualList | ConvertTo-Json) #add prop to list
+          $appItem | Add-Member -MemberType NoteProperty -Name "VirtualDiretoryPath" -Value $virtualList
         }
       }
     }
@@ -190,8 +197,30 @@ function Remove-Pool()
   )
 
   Import-Module WebAdministration;
+  $isSuccess = $false
+  $reason = "";
 
-  Remove-WebAppPool -Name $appPool
+  try 
+  {
+    $existAppCount = (Get-WebConfigurationProperty "/system.applicationHost/sites/site/application[@applicationPool='$appPool']" "machine/webroot/apphost" -name path).Count
+    
+    if ($existAppCount -eq 0)
+    {
+      Remove-WebAppPool -Name $appPool
+      $isSuccess = $true
+    }
+    else
+    {
+      $reason = "app exists count: $existAppCount , can't remove appPool"
+    }
+  }
+  catch 
+  {
+    Write-Host "An error occurred:"
+    $reason = $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 
@@ -569,7 +598,7 @@ function AppMaintain ([PSCustomObject] $PSObject)
 }
 
 #test connect begin======================================================================================================
-$eventPath = "output/{0}_{1}_{2}_{3}.json" -f $server,$command,$action,(Get-Date).ToString('yyyyMMddss')
+$eventPath = "output/{0}_{1}_{2}_{3}.json" -f $server,$command,$action,(Get-Date).ToString('yyyyMMddhhmmss')
 $testConn = TestServerConnection($server)
 
 if ($testConn -eq $false)
@@ -613,7 +642,17 @@ if ($session)
       default { $JsonObject = @{isSuccess=$false;reason="command $command not exist"}}
   }
 
-  $RealJsonObject =  $JsonObject | ConvertTo-Json | Set-Content -Path $eventPath
+  # Get ConvertJson level
+  [int]$jsonDepth = 2;
+  [string]$searchKey = "$command$action";
+  $foundKeys = $depthDictionary.Keys | % { if($_.contains($searchKey)){$_}}
+
+  if ($foundKeys)
+  {
+    $jsonDepth = $depthDictionary["$command$action"];
+  }
+
+  $RealJsonObject =  $JsonObject | ConvertTo-Json -Depth $jsonDepth | Set-Content -Encoding utf8 -Path $eventPath
 
   #Write-Host $RealJsonObject
 
