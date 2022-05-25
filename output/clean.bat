@@ -1,0 +1,1 @@
+for /f "delims==" %%F in ('dir  /b /s  *.json') do (del "%%F")
