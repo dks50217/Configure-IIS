@@ -4,7 +4,35 @@ use powershell cmdlets to configure IIS configuration settings
 
 # How to use
 
-todo...add call ps1 param method
+1. set variable in config.ini
+
+    ```ini
+    user={user_name}
+    password={user_password}
+    server={server}
+    command={command}
+    action={action}
+    action={action}
+    ``` 
+
+2. call test.bat execute a PowerShell script
+
+or running PowerShell.exe inside command prompt
+
+```bat
+powershell.exe -noexit .\Remote-IIS.ps1 -user {user} -password {password} -server {server} -command {command} -action {action}
+```
+
+# Command
+
+..Command Table
+
+# Sample
+
+..Sample
+
+
+
 
 
 
