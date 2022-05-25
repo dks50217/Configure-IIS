@@ -12,7 +12,6 @@ use powershell cmdlets to configure IIS configuration settings
     server={server}
     command={command}
     action={action}
-    action={action}
     ``` 
 
 2. call test.bat execute a PowerShell script
