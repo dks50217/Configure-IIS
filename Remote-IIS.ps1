@@ -98,37 +98,49 @@ function Set-Session
     return $rtnObj;
 }
 
-#ps4 may not work
 function Get-AppPoolList
 {
-  Import-Module WebAdministration;
-  $isSuccess = $false
+    
+  $isSuccess = $false;
   $reason = "";
    
-  try 
+  Try 
   {
-    $appPoolList = Get-IISAppPool | Select-Object Name,State,ManagedRuntimeVersion,ManagedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64
-    $isSuccess = $true;
-  }
-  catch 
-  {
-    Write-Host "An error occurred:"
-    $reason = $_
-  }
+      
+      Import-Module WebAdministration;
+      
+      $appPoolList = Get-ChildItem -Path IIS:\AppPools\  | Select-Object name, state, managedRuntimeVersion, managedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64;
+      
+      #Get managedRuntimeVersion select option
+      $runtimeOptions = $appPoolList | Group-Object -Property managedRuntimeVersion -NoElement | Select-Object Name;
 
-  New-Object -TypeName PSCustomObject -Property @{appPoolList=$appPoolList;isSuccess=$isSuccess;reason=$reason}
+      #Get managedPipelineMode select option
+      $pipelineOptions = $appPoolList | Group-Object -Property managedPipelineMode -NoElement | Select-Object Name;
+
+      $options = @{
+        runtime = $runtimeOptions
+        pipeline = $pipelineOptions
+      }
+
+      $isSuccess = $true;
+  }
+  Catch 
+  {
+    Write-Host "An error occurred:";
+    $reason = $_;
+  }
+  
+  New-Object -TypeName PSCustomObject -Property @{appPoolList=$appPoolList;options=$options;isSuccess=$isSuccess;reason=$reason};
 }
-
 
 function Get-Site-List
 {
-  Import-Module WebAdministration;
-  
   $isSuccess = $false
   $reason = "";
 
   try 
   {
+    Import-Module WebAdministration; 
     $siteList = get-website | Select-Object id,name,state,applicationPool,physicalPath,bindings,enabledProtocols,serverAutoStart
     $isSuccess = $true;
   }
@@ -147,13 +159,12 @@ function Get-Application-List
     [string]$siteName
   )
 
-  Import-Module WebAdministration;
-
   $isSuccess = $false
   $reason = "";
 
   try 
   {
+    Import-Module WebAdministration;
     $appList = Get-WebApplication -Site $siteName | Select-Object path,applicationPool,PhysicalPath
 
     #Get VirtualDirectory and save in list item
@@ -190,23 +201,23 @@ function Init-IIS
   New-Object -TypeName PSCustomObject -Property @{count=$count;}
 }
 
-function Remove-Pool()
+function Remove-Pool
 {
   param (
     [string]$appPool
   )
 
-  Import-Module WebAdministration;
   $isSuccess = $false
   $reason = "";
 
   try 
   {
+    Import-Module WebAdministration;
     $existAppCount = (Get-WebConfigurationProperty "/system.applicationHost/sites/site/application[@applicationPool='$appPool']" "machine/webroot/apphost" -name path).Count
     
     if ($existAppCount -eq 0)
     {
-      Remove-WebAppPool -Name $appPool
+      $result = Remove-WebAppPool -Name $appPool
       $isSuccess = $true
     }
     else
@@ -220,7 +231,7 @@ function Remove-Pool()
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
 
 
@@ -252,18 +263,18 @@ function Create-New-Site
 
   Write-Host "Creating Application Pool: $siteName";
   New-WebAppPool -Name $siteName -Force;
-  Set-ItemProperty IIS:\AppPools\$siteName managedRuntimeVersion v$netVersion -Force -Verbose | Log-Action; # SET THE .NET RUNTIME VERSION 
+  Set-ItemProperty IIS:\AppPools\$siteName managedRuntimeVersion v$netVersion -Force -Verbose
   if ($enable32Bit -eq $True)
   {
-    Set-ItemProperty IIS:\AppPools\$siteName enable32BitAppOnWin64 true -Force -Verbose | Log-Action; # IF APPLICABLE, ENABLE 32 BIT APPLICATIONS
+    Set-ItemProperty IIS:\AppPools\$siteName enable32BitAppOnWin64 true -Force -Verbose
   }
   if ($classicPipelineMode -eq $True)
   {
-    Set-ItemProperty IIS:\AppPools\$siteName managedPipelineMode 1 -Force -Verbose | Log-Action; # IF APPLICABLE, SET TO CLASSIC PIPELINE MODE
+    Set-ItemProperty IIS:\AppPools\$siteName managedPipelineMode 1 -Force -Verbose
   }
-  Set-ItemProperty IIS:\AppPools\$siteName passAnonymousToken true -Force -Verbose | Log-Action; 
+  Set-ItemProperty IIS:\AppPools\$siteName passAnonymousToken true -Force -Verbose
   Write-Host "Creating Website: $siteName :$port";
-  New-Website -Name $siteName -ApplicationPool $appPool -ipAddress $ipAddress -HostHeader $hostHeader -PhysicalPath $siteFolder -Port $port  -Force -Verbose | Log-Action; # CREATE THE SITE
+  New-Website -Name $siteName -ApplicationPool $appPool -ipAddress $ipAddress -HostHeader $hostHeader -PhysicalPath $siteFolder -Port $port  -Force -Verbose
 }
 
 function Set-Site
@@ -397,9 +408,43 @@ function Remove-Site
     [string]$siteName
   )
 
-  #Check Site Exists
-  
-  Remove-WebSite -Name $siteName
+  $isSuccess = $false
+  $isSiteExist = $false
+  $existAppCount = 0
+  $reason = "";
+
+  try
+  {
+    Import-Module WebAdministration
+
+    #Check Site Exists
+    $isSiteExist = Test-Path "IIS:\Sites\$siteName" -eq $true
+
+    if ( $isSiteExist -eq $false)
+    {
+      $reason = "site: [$siteName] not exists"
+    }
+
+    #Check Application Exists
+    $existAppCount = (Get-ChildItem "IIS:\Sites\$siteName").count;
+
+    if ($existAppCount -eq 0)
+    {
+      $result = Remove-WebSite -Name $siteName
+      $isSuccess = $true
+    }
+    else
+    {
+      $reason = "can't remove site: [$siteName], because app exists, count : [$existAppCount]"
+    }
+  }
+  catch
+  {
+    Write-Host "An error occurred:"
+    $reason = $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
 
 
@@ -412,20 +457,43 @@ function Create-New-Application
     [string]$siteName
   )
 
-  if ( (Test-Path "IIS:\Sites\$siteName\$appName") -eq $false ) 
+  $isSuccess = $false
+  $isSiteExist = $false
+  $reason = "";
+
+  try
   {
-		Write-Host "Physical Path: $appFolder"
-		New-Item "IIS:\Sites\$siteName\$appName" -type Application -physicalpath $appFolder -ApplicationPool $appPool
-		Write-Host "$appName created"
-		#IIS:\>New-WebApplication -Name testApp -Site 'Default Web Site' -PhysicalPath c:\test -ApplicationPool DefaultAppPool
-	} 
-  else 
+    Import-Module WebAdministration
+
+    #check site exists
+    $isSiteExist = Test-Path "IIS:\Sites\$siteName" -eq $true
+
+    if ( $isSiteExist -eq $false)
+    {
+      $reason = "site: [$siteName] not exists"
+    }
+
+    if ( (Test-Path "IIS:\Sites\$siteName\$appName") -eq $false -And $isSiteExist) 
+    {
+      $result = New-Item "IIS:\Sites\$siteName\$appName" -type Application -physicalpath $appFolder -ApplicationPool $appPool
+      $isSuccess = $true
+    }
+    else 
+    {
+      $reason = "app: [$appName] already exists"
+    }
+  }
+  catch
   {
-		Write-Host "$appName already exists"
-	}
+    Write-Host "An error occurred:"
+    $reason = $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
 
-function Set-Application {
+function Set-Application 
+{
   param (
     [string]$appName,
     [string]$appFolder,
@@ -482,20 +550,93 @@ function Enable-FormsAuthentication
 	$config | Set-WebConfiguration system.web/authentication
 }
 
+function Create-AppPool
+{
+  param(
+    [string]$appPool,
+    [string]$netVersion,
+    [string]$managedpipelinemode,
+    [string]$autoStart
+  )
+
+  $isSuccess = $false
+  $isAppPoolExist = $true
+  $isAutoStart = $false
+  $reason = "";
+
+  try
+  {
+    Import-Module WebAdministration;
+
+    #check appPool exist
+    $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool"
+    if ($autoStart -eq "1" ) {$isAutoStart = $true};
+    
+    if ($isAppPoolExist -eq $false)
+    {
+       New-WebAppPool -Name $appPool
+       Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedRuntimeVersion $netVersion
+       Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedpipelinemode $managedpipelinemode
+       Set-ItemProperty -Path "IIS:\AppPools\$appPool" autoStart $isAutoStart
+       $result = Get-ChildItem -Path "IIS:\AppPools\$appPool" | Select-Object name, state, managedRuntimeVersion, managedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64
+       $isSuccess = $true
+    }
+    else
+    {
+      $reason = "can not create appPool, because appPool : [$appPool] is exists"
+    }
+  }
+  catch
+  {
+    Write-Host "An error occurred:"
+    $reason = $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+}
+
 function Set-AppPool
 {
   param(
-    [string]$website,
-    [string]$appName
+    [string]$appPool,
+    [string]$netVersion,
+    [string]$managedpipelinemode,
+    [string]$autoStart
   )
 
-  $webApp = Get-ItemProperty "IIS:\Sites\$website\$appName"
-	if( $webApp.applicationPool -eq $appPool ){
-		Write-Host "$appName Application Pools is already $appPool"
-	} else {
-		Set-ItemProperty "IIS:\Sites\$website\$appName" applicationPool $appPool
-		Write-Host "Set $appName to Application Pool $appPool"
-	}
+  $isSuccess = $false
+  $isAppPoolExist = $false
+  $isAutoStart = $false
+  $reason = "";
+
+  try
+  {
+    Import-Module WebAdministration;
+
+    #Check appPool exists
+    $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool"
+    if ($autoStart -eq "1" ) {$isAutoStart = $true};
+
+    if ($isAppPoolExist -eq $true)
+    {
+       Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedRuntimeVersion $netVersion
+       Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedpipelinemode $managedpipelinemode
+       Set-ItemProperty -Path "IIS:\AppPools\$appPool" autoStart $isAutoStart
+       $result = Get-ChildItem -Path "IIS:\AppPools\$appPool" | Select-Object name, state, managedRuntimeVersion, managedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64
+       $isSuccess = $true
+    }
+    else
+    {
+      $reason = "can not set appPool, because appPool : [$appPool] is not exists"
+    }
+  }
+  catch
+  {
+    Write-Host "An error occurred:"
+    $reason = $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
 
 #CSharp CSHelper call Bridge test
@@ -507,8 +648,6 @@ function Set-AppPool
 
 # $TestObj = CSharpBridgeTest;
 # Write-Output $TestObj
-
-
 function AppPoolMaintain ([PSCustomObject] $PSObject)
 {
   $rtnObj = $null;
@@ -519,20 +658,20 @@ function AppPoolMaintain ([PSCustomObject] $PSObject)
   {
       0 
       {
-        $rtnObj =  invoke-command -session $PSObject.session -scriptblock ${function:Remove-Pool} -ArgumentList ($param.AppPool)
+        $rtnObj =  invoke-command -session $PSObject.session -scriptblock ${function:Remove-Pool} -ArgumentList ($param.appPool)
       }
       1 
       {
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-AppPool} -ArgumentList ($param.siteName,$param.appName)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-AppPool} -ArgumentList ($param.appPool)
       }
       2 
       { 
-        #TODO Revise / Set?
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-AppPool} -ArgumentList ($param.siteName,$param.appName)
       }
       3 #Get List
       {
         $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Get-AppPoolList}
-      }
+      } #.NET CLR LIST
   }
 
   return $rtnObj;

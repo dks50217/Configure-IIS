@@ -22,6 +22,18 @@ or running PowerShell.exe inside command prompt
 powershell.exe -noexit .\Remote-IIS.ps1 -user {user} -password {password} -server {server} -command {command} -action {action}
 ```
 
+# Show all functions
+
+```bat
+powershell.exe -noexit .\allFunction.ps1
+```
+
+# Test
+
+## Remote test
+
+## Local test
+
 # Command
 
 ..Command Table
