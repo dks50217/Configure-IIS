@@ -103,6 +103,7 @@ function Get-AppPoolList
     
   $isSuccess = $false;
   $reason = "";
+  $booleanOptions = {'N','Y'}
    
   Try 
   {
@@ -111,15 +112,27 @@ function Get-AppPoolList
       
       $appPoolList = Get-ChildItem -Path IIS:\AppPools\  | Select-Object name, state, managedRuntimeVersion, managedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64;
       
+      #Get numberOfApplications
+      foreach ($poolItem in $appPoolList)
+      {
+        $appPool = $poolItem.name;
+        $numberOfApplications = (Get-WebConfigurationProperty "/system.applicationHost/sites/site/application[@applicationPool='$appPool']" "machine/webroot/apphost" -name path).Count
+        $poolItem | Add-Member -MemberType NoteProperty -Name "appCount" -Value $numberOfApplications
+      }
+
       #Get managedRuntimeVersion select option
-      $runtimeOptions = $appPoolList | Group-Object -Property managedRuntimeVersion -NoElement | Select-Object Name;
+      $runtimeOptions = $appPoolList | Group-Object -Property managedRuntimeVersion -NoElement | Select-Object @{l='label';e='Name'},@{l='value';e='Name'};
 
       #Get managedPipelineMode select option
-      $pipelineOptions = $appPoolList | Group-Object -Property managedPipelineMode -NoElement | Select-Object Name;
+      $pipelineOptions = $appPoolList | Group-Object -Property managedPipelineMode -NoElement | Select-Object @{l='label';e='Name'},@{l='value';e='Name'};
+
+      #Get AutoStart select option
+      $booleanOptions = @( @{ label="Y"; value="1";}, @{ label="N"; value="0"; } )
 
       $options = @{
         runtime = $runtimeOptions
         pipeline = $pipelineOptions
+        boolean = $booleanOptions
       }
 
       $isSuccess = $true;
@@ -234,47 +247,87 @@ function Remove-Pool
   New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
 
-
+#get-website | Select-Object id,name,state,applicationPool,physicalPath,bindings,enabledProtocols,serverAutoStart
 function Create-New-Site
 {
   param(
     [string]$siteName, 
     [string]$siteFolder,
     [string]$appPool,
-    [PSCustomObject]$bindList,
     [string]$netVersion, 
-    [boolean]$enable32Bit, 
-    [boolean]$classicPipelineMode
+    [string]$enable32,
+    [string]$autoStart
   )
 
-  Import-Module WebAdministration;
   $isSuccess = $false
-  $resultList = New-Object System.Collections.ArrayList
-  $column1 = "action"
-  $column2 = "isSuccess"
-  $column3 = "message"
-  
-  [boolean]$pathExists=Test-Path $siteFolder;
-  if ($pathExists -eq $False)
+  $isSiteExist = $false
+  $isFolderExist = $false
+  $isAutoStart = $false
+  $isAppPoolExist = $false
+  $isEnable32BitApp = $false
+  $reason = "";
+
+  try
   {
-      Write-Host "Creating Folder: $siteFolder";
-      New-Item $siteFolder -type directory -Verbose;   
+    Import-Module WebAdministration;
+    
+    $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool";
+    $isSiteExist = Test-Path "IIS:\AppPools\$siteName";
+    $isFolderExist = Test-Path $siteFolder;
+
+    if ($isAppPoolExist -eq $false)
+    {
+       $reason = $reason + "appPool: [$appPool] is not exist,"
+    }
+
+    if ($isSiteExist -eq $true)
+    {
+       $reason = $reason + "site: [$siteName] is exist,"
+    }
+
+    if ($isFolderExist -eq $false)
+    {
+      $reason = $reason + "siteFolder: [$siteFolder] is not exist,"
+    }
+
+    if ($autoStart -eq "1" ) {$isAutoStart = $true};
+    if ($enable32 -eq "1" ) {$isEnable32BitApp = $true};
+
+    $readyCreate = ($isSiteExist -eq $false) -and ($isFolderExist -eq $true) -and ($isAppPoolExist -eq $true)
+
+    if ($readyCreate)
+    {
+      #New-Website -Name $siteName -ApplicationPool $appPool -ipAddress $ipAddress -HostHeader $hostHeader -PhysicalPath $siteFolder -Port $port  -Force -Verbose
+      $result = New-Website -Name $siteName -ApplicationPool $appPool -PhysicalPath $siteFolder
+      Set-ItemProperty "IIS:\AppPools\$siteName" managedRuntimeVersion $netVersion
+      Set-ItemProperty "IIS:\AppPools\$siteName" enable32BitAppOnWin64 $isEnable32BitApp
+      Set-ItemProperty "IIS:\AppPools\$siteName" serverAutoStart $isAutoStart
+      #Set-ItemProperty IIS:\AppPools\$siteName managedPipelineMode 1 -Force -Verbose
+      $isSuccess = $true;
+    }
+    else
+    {
+      $reason = "create site: [$siteName] fail," + $reason;
+    }
+  }
+  catch
+  {
+    Write-Host "An error occurred:"
+    $reason = $_
   }
 
-  Write-Host "Creating Application Pool: $siteName";
-  New-WebAppPool -Name $siteName -Force;
-  Set-ItemProperty IIS:\AppPools\$siteName managedRuntimeVersion v$netVersion -Force -Verbose
-  if ($enable32Bit -eq $True)
-  {
-    Set-ItemProperty IIS:\AppPools\$siteName enable32BitAppOnWin64 true -Force -Verbose
-  }
-  if ($classicPipelineMode -eq $True)
-  {
-    Set-ItemProperty IIS:\AppPools\$siteName managedPipelineMode 1 -Force -Verbose
-  }
-  Set-ItemProperty IIS:\AppPools\$siteName passAnonymousToken true -Force -Verbose
-  Write-Host "Creating Website: $siteName :$port";
-  New-Website -Name $siteName -ApplicationPool $appPool -ipAddress $ipAddress -HostHeader $hostHeader -PhysicalPath $siteFolder -Port $port  -Force -Verbose
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+}
+
+function Set-WebBinding
+{
+  
+
+}
+
+function Remove-WebBinding
+{
+
 }
 
 function Set-Site
@@ -283,122 +336,68 @@ function Set-Site
     [string]$siteName, 
     [string]$siteFolder,
     [string]$appPool,
-    [PSCustomObject]$bindList,
     [string]$netVersion, 
-    [boolean]$enable32Bit, 
-    [boolean]$classicPipelineMode,
-    [bool]$isEnable
+    [string]$enable32,
+    [string]$autoStart
   )
 
-  Import-Module WebAdministration
-
   $isSuccess = $false
-  $resultList = New-Object System.Collections.ArrayList
-  $column1 = "action"
-  $column2 = "isSuccess"
-  $column3 = "message"
+  $isSiteExist = $false
+  $isFolderExist = $false
+  $isAutoStart = $false
+  $isAppPoolExist = $false
+  $isEnable32BitApp = $false
+  $reason = "";
 
   try
   {
-    [boolean]$pathExists = Test-Path $siteFolder;
-    $resultFolder = New-Object System.Object
-    $resultFolder | Add-Member -MemberType NoteProperty -Name $column1 -Value "Set Folder"
-    if ($pathExists -eq $true)
+     Import-Module WebAdministration
+
+     $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool";
+     $isSiteExist = Test-Path "IIS:\AppPools\$siteName";
+     $isFolderExist = Test-Path $siteFolder;
+
+    if ($isAppPoolExist -eq $false)
     {
-        Write-Host "Folder exits: $siteFolder";
-        Set-ItemProperty "IIS:\Sites\$siteName" physicalPath $siteFolder -Verbose  
-        $resultFolder | Add-Member -MemberType NoteProperty -Name $column2 -Value $true
+       $reason = $reason + "appPool: [$appPool] is not exist,"
+    }
+
+    if ($isSiteExist -eq $false)
+    {
+       $reason = $reason + "site: [$siteName] is not exist,"
+    }
+
+    if ($isFolderExist -eq $false)
+    {
+      $reason = $reason + "siteFolder: [$siteFolder] is not exist,"
+    }
+
+    if ($autoStart -eq "1" ) {$isAutoStart = $true};
+    if ($enable32 -eq "1" ) {$isEnable32BitApp = $true};
+
+    $readySet = ($isSiteExist -eq $true) -and ($isFolderExist -eq $true) -and ($isAppPoolExist -eq $true)
+    
+    if ($readySet)
+    {
+      Set-ItemProperty "IIS:\AppPools\$siteName" ApplicationPool $appPool
+      Set-ItemProperty "IIS:\AppPools\$siteName" PhysicalPath $siteFolder
+      Set-ItemProperty "IIS:\AppPools\$siteName" managedRuntimeVersion $netVersion
+      Set-ItemProperty "IIS:\AppPools\$siteName" enable32BitAppOnWin64 $isEnable32BitApp
+      Set-ItemProperty "IIS:\AppPools\$siteName" serverAutoStart $isAutoStart
+      $isSuccess = $true;
     }
     else
     {
-        $resultFolder | Add-Member -MemberType NoteProperty -Name $column2 -Value $false
-        $resultFolder | Add-Member -MemberType NoteProperty -Name $column3 -Value "Folder not exits"
+      $reason = "set site: [$siteName] fail," + $reason;
     }
-
-    $resultList.Add($resultFolder)
-
-    [boolean]$appPoolExists = Test-Path "IIS:\AppPools\$appPool";
-    $resultappPool = New-Object System.Object
-    $resultappPool | Add-Member -MemberType NoteProperty -Name $column1 -Value "Set AppPool"
-    if ($appPoolExists -eq $true)
-    {
-      Write-Host "AppPool exits: $appPool";
-      Set-ItemProperty "IIS:\Sites\$siteName" applicationPool $appPool -Verbose
-      $resultappPool | Add-Member -MemberType NoteProperty -Name $column2 -Value $true
-    }
-    else
-    {
-      $resultappPool | Add-Member -MemberType NoteProperty -Name $column2 -Value $false
-      $resultappPool | Add-Member -MemberType NoteProperty -Name $column3 -Value "AppPool not exits"
-    }
-
-    $resultList.Add($resultappPool)
-
-    #TODO CHECK CLR .NET VERSION
-    $resultnetVersion = New-Object System.Object
-    $resultnetVersion | Add-Member -MemberType NoteProperty -Name $column1 -Value "Set CLR .NET"
-    Set-ItemProperty "IIS:\Sites\$siteName" managedRuntimeVersion v$netVersion -Force -Verbose
-    $resultnetVersion | Add-Member -MemberType NoteProperty -Name $column2 -Value $true
-    $resultList.Add($resultnetVersion)
-
-    $resultEnable32Bit = New-Object System.Object
-    $resultEnable32Bit | Add-Member -MemberType NoteProperty -Name $column1 -Value "Set 32 Bit"
-    Set-ItemProperty "IIS:\Sites\$siteName" enable32BitAppOnWin64 $enable32Bit -Verbose
-    $resultEnable32Bit | Add-Member -MemberType NoteProperty -Name $column2 -Value $true
-    $resultList.Add($resultEnable32Bit)
-
-    $resultPipelineMode = New-Object System.Object
-    $resultPipelineMode | Add-Member -MemberType NoteProperty -Name $column1 -Value "Set managedPipelineMode"
-    Set-ItemProperty "IIS:\Sites\$siteName" managedPipelineMode $classicPipelineMode -Verbose
-    $resultPipelineMode | Add-Member -MemberType NoteProperty -Name $column2 -Value $true
-    $resultList.Add($resultPipelineMode)
-
-    #Binding or remove all binding add new binding
-    foreach ($bindItem in $bindList)
-    {
-      $fullInfo = "{0}:{1}:{2}" -f $bindItem.ipAddress, $bindItem.port, $bindItem.hostHeader
-
-      if ($null -ne (Get-WebBinding | Where-Object {$_.bindinginformation -eq $fullInfo}))
-      {
-         Write-Host "Binding exits: $fullInfo";
-      }
-      else
-      {
-        Set-WebBinding -Name "IIS:\Sites\$siteName" -HostHeader $bindItem.hostHeader -BindingInformation $bindItem.ipAddress -PropertyName "Port" -Value $bindItem.$port
-        $resultBinding = New-Object System.Object
-        $resultBinding | Add-Member -MemberType NoteProperty -Name $column1 -Value "Set Binding"
-      }
-    }
-
-    # $existBindingList = Get-WebBinding -Name $siteName | Select-Object bindingInformation
-    # foreach ($exitItem in $existBindingList)
-    # {
-    #    $exitArray = $exitItem.bindingInformation.Split(":")
-    #    $exitIP = $exitArray[0]
-    #    $exitPort = $exitArray[1]
-    #    $exitHeader = $exitArray[2]
-    #    Get-WebBinding -Port $exitIP -Name $siteName | Remove-WebBinding
-    # }
-
-    if ($isEnable -eq $false)
-    {
-      Stop-WebSite -Name $siteName
-    }
-
-    $isSuccess = $true
   }
   catch
   {
-     $isSuccess = $false
-     $exceptionObj = New-Object System.Object
-     $exceptionObj | Add-Member -MemberType NoteProperty -Name $column1 -Value "Exception"
-     $exceptionObj | Add-Member -MemberType NoteProperty -Name $column2 -Value  $isSuccess
-     $exceptionObj | Add-Member -MemberType NoteProperty -Name $column3 -Value  $_
-     $resultList.Add($exceptionObj)
+    Write-Host "An error occurred:"
+    $reason = $_
   }
 
-  $resultJsonList = $resultList | ConvertTo-Json
-  New-Object -TypeName PSCustomObject -Property @{resultList=$resultJsonList;isSuccess=$isSuccess}
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
 
 
@@ -418,24 +417,34 @@ function Remove-Site
     Import-Module WebAdministration
 
     #Check Site Exists
-    $isSiteExist = Test-Path "IIS:\Sites\$siteName" -eq $true
+    $isSiteExist = Test-Path "IIS:\Sites\$siteName"
 
-    if ( $isSiteExist -eq $false)
+    if ($isSiteExist -eq $false)
     {
-      $reason = "site: [$siteName] not exists"
+      $reason = $reason + "site: [$siteName] not exists,"
     }
 
-    #Check Application Exists
-    $existAppCount = (Get-ChildItem "IIS:\Sites\$siteName").count;
+    if ($isSiteExist)
+    {
+        #Check Application Exists
+        $existAppCount = (Get-ChildItem "IIS:\Sites\$siteName").count;
+    }
 
-    if ($existAppCount -eq 0)
+    if ($existAppCount -gt 1)
+    {
+       $reason = $reason + "can't remove site: [$siteName], because app exists, count : [$existAppCount],"
+    }
+
+    $readyRemove = ($isSiteExist -eq $true) -and ($existAppCount -eq 1)
+
+    if ($readyRemove)
     {
       $result = Remove-WebSite -Name $siteName
       $isSuccess = $true
     }
     else
     {
-      $reason = "can't remove site: [$siteName], because app exists, count : [$existAppCount]"
+      $reason = "can't remove site: [$siteName]," + $reason;
     }
   }
   catch
@@ -556,12 +565,14 @@ function Create-AppPool
     [string]$appPool,
     [string]$netVersion,
     [string]$managedpipelinemode,
-    [string]$autoStart
+    [string]$autoStart,
+    [string]$enable32
   )
 
   $isSuccess = $false
   $isAppPoolExist = $true
   $isAutoStart = $false
+  $isEnable32BitApp = $false
   $reason = "";
 
   try
@@ -571,6 +582,7 @@ function Create-AppPool
     #check appPool exist
     $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool"
     if ($autoStart -eq "1" ) {$isAutoStart = $true};
+    if ($enable32 -eq "1" ) {$isEnable32BitApp = $true};
     
     if ($isAppPoolExist -eq $false)
     {
@@ -578,6 +590,7 @@ function Create-AppPool
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedRuntimeVersion $netVersion
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedpipelinemode $managedpipelinemode
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" autoStart $isAutoStart
+       Set-ItemProperty -Path "IIS:\AppPools\$appPool" enable32BitAppOnWin64 $isEnable32BitApp
        $result = Get-ChildItem -Path "IIS:\AppPools\$appPool" | Select-Object name, state, managedRuntimeVersion, managedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64
        $isSuccess = $true
     }
@@ -601,11 +614,13 @@ function Set-AppPool
     [string]$appPool,
     [string]$netVersion,
     [string]$managedpipelinemode,
-    [string]$autoStart
+    [string]$autoStart,
+    [string]$enable32
   )
 
   $isSuccess = $false
   $isAppPoolExist = $false
+  $isEnable32BitApp = $false
   $isAutoStart = $false
   $reason = "";
 
@@ -616,12 +631,14 @@ function Set-AppPool
     #Check appPool exists
     $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool"
     if ($autoStart -eq "1" ) {$isAutoStart = $true};
+    if ($enable32 -eq "1" ) {$isEnable32BitApp = $true};
 
     if ($isAppPoolExist -eq $true)
     {
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedRuntimeVersion $netVersion
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedpipelinemode $managedpipelinemode
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" autoStart $isAutoStart
+       Set-ItemProperty -Path "IIS:\AppPools\$appPool" enable32BitAppOnWin64 $isEnable32BitApp
        $result = Get-ChildItem -Path "IIS:\AppPools\$appPool" | Select-Object name, state, managedRuntimeVersion, managedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64
        $isSuccess = $true
     }
@@ -662,16 +679,16 @@ function AppPoolMaintain ([PSCustomObject] $PSObject)
       }
       1 
       {
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-AppPool} -ArgumentList ($param.appPool)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-AppPool} -ArgumentList ($param.appPool,$param.netVersion,$param.managedpipelinemode,$param.autoStart,$param.enable32)
       }
       2 
       { 
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-AppPool} -ArgumentList ($param.siteName,$param.appName)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-AppPool} -ArgumentList ($param.appPool,$param.netVersion,$param.managedpipelinemode,$param.autoStart,$param.enable32)
       }
       3 #Get List
       {
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Get-AppPoolList}
-      } #.NET CLR LIST
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${functionGet-AppPoolList}
+      }
   }
 
   return $rtnObj;
@@ -691,12 +708,13 @@ function SiteMaintain ([PSCustomObject] $PSObject)
       }
       1 
       {
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-New-Site} -ArgumentList ($param.basePath,$param.siteName,$param.siteFolder,$param.hostHeader,$param.ipAddress,$param.port,$param.netVersion,$param.enable32Bit,$param.classicPipelineMode)
+        #$bindingList = $param.bindingList | ConvertFrom-Json
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-New-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.netVersion,$param.enable32,$param.classicPipelineMode)
       }
       2 
       {
-        $bindingList = $param.bindingList | ConvertFrom-Json
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$bindingList,$param.netVersion,$param.enable32Bit,$param.classicPipelineMode,$param.isEnable)
+        #$bindingList = $param.bindingList | ConvertFrom-Json
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.netVersion,$param.enable32Bit,$param.classicPipelineMode,$param.isEnable)
       }
       3 #Get List
       {
