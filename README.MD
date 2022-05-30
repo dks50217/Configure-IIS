@@ -37,7 +37,7 @@ powershell.exe -noexit .\allFunction.ps1
 
 ```bat
 cd localtest
-powershell -command "& { .\application.ps1;{function} {site} {app} {path} {pool} {anonymous}}"
+powershell -ExecutionPolicy unrestricted -command "& { . .\application.ps1; Create-New-Application 'Default Web Site' 'testapp' 'D:\Demo_Web\Sample' 'demoPool' '1' }"
 ```
 
 # Command
