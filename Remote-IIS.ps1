@@ -254,17 +254,16 @@ function Create-New-Site
     [string]$siteName, 
     [string]$siteFolder,
     [string]$appPool,
-    [string]$netVersion, 
-    [string]$enable32,
-    [string]$autoStart
+    [string]$autoStart,
+    [string]$preload
   )
 
   $isSuccess = $false
   $isSiteExist = $false
   $isFolderExist = $false
   $isAutoStart = $false
+  $isPreLoad = $false
   $isAppPoolExist = $false
-  $isEnable32BitApp = $false
   $reason = "";
 
   try
@@ -291,18 +290,15 @@ function Create-New-Site
     }
 
     if ($autoStart -eq "1" ) {$isAutoStart = $true};
-    if ($enable32 -eq "1" ) {$isEnable32BitApp = $true};
+    if ($preload -eq "1" ) {$isPreLoad = $true};
 
     $readyCreate = ($isSiteExist -eq $false) -and ($isFolderExist -eq $true) -and ($isAppPoolExist -eq $true)
 
     if ($readyCreate)
     {
-      #New-Website -Name $siteName -ApplicationPool $appPool -ipAddress $ipAddress -HostHeader $hostHeader -PhysicalPath $siteFolder -Port $port  -Force -Verbose
       $result = New-Website -Name $siteName -ApplicationPool $appPool -PhysicalPath $siteFolder
-      Set-ItemProperty "IIS:\AppPools\$siteName" managedRuntimeVersion $netVersion
-      Set-ItemProperty "IIS:\AppPools\$siteName" enable32BitAppOnWin64 $isEnable32BitApp
-      Set-ItemProperty "IIS:\AppPools\$siteName" serverAutoStart $isAutoStart
-      #Set-ItemProperty IIS:\AppPools\$siteName managedPipelineMode 1 -Force -Verbose
+      Set-ItemProperty "IIS:\Sites\$siteName" serverAutoStart $isAutoStart
+      Set-ItemProperty "IIS:\Sites\$siteName" applicationDefaults.preloadEnabled $isPreLoad
       $isSuccess = $true;
     }
     else
@@ -313,7 +309,7 @@ function Create-New-Site
   catch
   {
     Write-Host "An error occurred:"
-    $reason = $_
+    Write-Host $reason = $_
   }
 
   New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
@@ -321,13 +317,50 @@ function Create-New-Site
 
 function Set-WebBinding
 {
-  
+  param(
+    [string]$siteName,
+    [string]$bindingJsonList
+  )
 
-}
+  $isSuccess = $false;
+  $reason = "";
+  $result = New-Object -TypeName 'System.Collections.ArrayList';
 
-function Remove-WebBinding
-{
+  try
+  {
+    #Convert To PSObject
+    $bindingList = $bindingJsonList | ConvertFrom-Json
+     
+    #Remove all
+    $orgBindingList = Get-WebBinding $siteName |Select-Object -ExpandProperty bindingInformation
 
+    foreach ($item in $orgBindingList)
+    {
+      $orgIP = $item.split(':')[0];
+      Get-WebBinding -Port $orgIP -Name $siteName | Remove-WebBinding;
+    }
+    
+    #Create all  
+    foreach ($item in $bindingList)
+    {
+      $bindObject = [PSCustomObject]@{
+        ip =$item.ip
+        port = $item.port
+        header = $item.header
+      };
+      New-WebBinding -Name $siteName -IPAddress $item.ip -Port $item.port -HostHeader $item.header  
+      $result.Add($bindObject);
+    }
+
+    $isSuccess = $true;
+  }
+  catch
+  {
+    Write-Host "An error occurred:"
+    Write-Host $reason = $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
 
 function Set-Site
@@ -336,17 +369,16 @@ function Set-Site
     [string]$siteName, 
     [string]$siteFolder,
     [string]$appPool,
-    [string]$netVersion, 
-    [string]$enable32,
-    [string]$autoStart
+    [string]$autoStart,
+    [string]$preload
   )
 
   $isSuccess = $false
   $isSiteExist = $false
   $isFolderExist = $false
   $isAutoStart = $false
+  $isPreLoad = $false
   $isAppPoolExist = $false
-  $isEnable32BitApp = $false
   $reason = "";
 
   try
@@ -354,7 +386,7 @@ function Set-Site
      Import-Module WebAdministration
 
      $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool";
-     $isSiteExist = Test-Path "IIS:\AppPools\$siteName";
+     $isSiteExist = Test-Path "IIS:\Sites\$siteName";
      $isFolderExist = Test-Path $siteFolder;
 
     if ($isAppPoolExist -eq $false)
@@ -373,17 +405,16 @@ function Set-Site
     }
 
     if ($autoStart -eq "1" ) {$isAutoStart = $true};
-    if ($enable32 -eq "1" ) {$isEnable32BitApp = $true};
+    if ($preload -eq "1" ) {$isPreLoad = $true};
 
     $readySet = ($isSiteExist -eq $true) -and ($isFolderExist -eq $true) -and ($isAppPoolExist -eq $true)
     
     if ($readySet)
     {
-      Set-ItemProperty "IIS:\AppPools\$siteName" ApplicationPool $appPool
-      Set-ItemProperty "IIS:\AppPools\$siteName" PhysicalPath $siteFolder
-      Set-ItemProperty "IIS:\AppPools\$siteName" managedRuntimeVersion $netVersion
-      Set-ItemProperty "IIS:\AppPools\$siteName" enable32BitAppOnWin64 $isEnable32BitApp
-      Set-ItemProperty "IIS:\AppPools\$siteName" serverAutoStart $isAutoStart
+      Set-ItemProperty "IIS:\Sites\$siteName" ApplicationPool $appPool
+      Set-ItemProperty "IIS:\Sites\$siteName" PhysicalPath $siteFolder
+      Set-ItemProperty "IIS:\Sites\$siteName" serverAutoStart $isAutoStart
+      Set-ItemProperty "IIS:\Sites\$siteName" applicationDefaults.preloadEnabled $isPreLoad
       $isSuccess = $true;
     }
     else
@@ -398,6 +429,99 @@ function Set-Site
   }
 
   New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+}
+
+function Set-WebVirtualDirectory 
+{
+    param (
+      [string]$siteName,
+      [string]$appName,
+      [string]$dicJsonList
+    )
+  
+    $isSuccess = $false
+    $isSiteExist = $false
+    $isAppExist = $false
+    $isReadyCreate = $false;
+    $result = New-Object -TypeName 'System.Collections.ArrayList';
+  
+    try
+    {
+      Import-Module WebAdministration
+      $isSiteExist = Test-Path "IIS:\Sites\$siteName";
+      $isAppExist = Test-Path "IIS:\Sites\$siteName\$appName";
+  
+       #Covert To PS Object
+      $dicList = $dicJsonList | ConvertFrom-Json
+  
+      if ($isSiteExist -eq $false)
+      {
+        $reason = $reason + "site: [$siteName] not exists,"
+      }
+  
+      if ($isAppExist -eq $false)
+      {
+        $reason = $reason + "app: [$appName] not exists,"
+      }
+  
+      $isReadyCreate  = (($isSiteExist -eq $true) -and ($isAppExist -eq $true))
+  
+      # Remove all
+      if ($isReadyCreate)
+      {
+        # Remove all
+        $orgDCList = Get-WebVirtualDirectory -Site $siteName -Application $appName | Select-Object path,physicalPath
+  
+        foreach ($item in $orgDCList)
+        {
+          $dicPath = $item.path;
+          Remove-Item "IIS:\Sites\$siteName\$appName\$dicPath" -Force -Recurse
+          
+          $vdRemoveObject = [PSCustomObject]@{
+            success = $true
+            type = 'remove'
+            name = $item.name
+            path = $item.path
+          }
+
+          $result.Add($vdRemoveObject)
+        }
+  
+        # Create all
+        foreach ($item in $dicList)
+        {
+            $isPathExist = Test-Path $item.path;
+    
+            $vdAddObject = [PSCustomObject]@{
+              success = ''
+              type = 'add'
+              name = $item.name
+              path = $item.path
+            }
+    
+            if ($isPathExist)
+            {
+              New-WebVirtualDirectory -Site $siteName -Application $appName -Name $item.name -PhysicalPath $item.path
+              $vdAddObject.success = $true;
+            }
+            else
+            {
+              $vdAddObject.success = $false;
+            }
+  
+            $result.Add($vdAddObject)
+        }
+      }
+
+      $isSuccess = $true;
+    }
+    catch
+    {
+      Write-Host "An error occurred:"
+      $reason = $_
+    }
+  
+    New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
 
 
@@ -460,36 +584,58 @@ function Remove-Site
 function Create-New-Application
 {
   param(
+    [string]$siteName,
     [string]$appName,
     [string]$appFolder,
     [string]$appPool,
-    [string]$siteName
+    [string]$anonymous
   )
 
   $isSuccess = $false
   $isSiteExist = $false
+  $isAppExist = $false
+  $isAppPoolExist = $false
+  $isAnonymous = $false
   $reason = "";
 
   try
   {
     Import-Module WebAdministration
 
+    if ($anonymous -eq "1" ) {$isAnonymous = $true};
+
     #check site exists
-    $isSiteExist = Test-Path "IIS:\Sites\$siteName" -eq $true
+    $isSiteExist = Test-Path "IIS:\Sites\$siteName"
 
     if ( $isSiteExist -eq $false)
     {
-      $reason = "site: [$siteName] not exists"
+      $reason = $reason + "site: [$siteName] not exists,"
     }
 
-    if ( (Test-Path "IIS:\Sites\$siteName\$appName") -eq $false -And $isSiteExist) 
+    $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool";
+
+    if ($isAppPoolExist -eq $false)
     {
-      $result = New-Item "IIS:\Sites\$siteName\$appName" -type Application -physicalpath $appFolder -ApplicationPool $appPool
+      $reason = $reason + "AppPool: [$appPool] not exists,"
+    }
+
+    $isAppExist = Test-Path "IIS:\Sites\$siteName\$appName";
+
+    if ($isAppExist -eq $true)
+    { 
+      $reason = $reason + "app: [$appName] already exists,"
+    }
+
+    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $false) 
+    {
+      New-Item "IIS:\Sites\$siteName\$appName" -type Application -physicalpath $appFolder -ApplicationPool $appPool
+      $anonAuthFilter = "/system.WebServer/security/authentication/AnonymousAuthentication"
+      Set-WebConfigurationProperty -filter $anonAuthFilter -name Enabled -value $isAnonymous -location "IIS:\Sites\$website\$appName"
       $isSuccess = $true
     }
-    else 
+    else
     {
-      $reason = "app: [$appName] already exists"
+      $reason = "can not create app:[[$appName]," +  $reason;
     }
   }
   catch
@@ -504,47 +650,118 @@ function Create-New-Application
 function Set-Application 
 {
   param (
+    [string]$siteName,
     [string]$appName,
     [string]$appFolder,
     [string]$appPool,
-    [string]$siteName,
-    [bool]$isAnonymous
+    [string]$anonymous
   )
 
-  #physicalPath
-  Set-ItemProperty "IIS:\Sites\$siteName\$appName" -name physicalPath -value $appFolder
+  $isSuccess = $false
+  $isSiteExist = $false
+  $isAppExist = $false
+  $isAppPoolExist = $false
+  $isAnonymous = $false
+  $reason = "";
 
-  #applicationPool
-  Set-ItemProperty "IIS:\Sites\$siteName\$appName" -name applicationPool -value $appPool
-  
-  #Anonymous Authentication 
-  $anonAuthFilter = "/system.WebServer/security/authentication/AnonymousAuthentication"
-  $anonAuth = Get-WebConfigurationProperty -filter $anonAuthFilter -name Enabled -location "IIS:\Sites\$website\$appName"
-  if($anonAuth.Value -eq $isAnonymous)
+  try
   {
-		Write-Host "$appName Anonymous Authentication is already $isAnonymous"
-	}
-  else 
+    Import-Module WebAdministration
+
+    if ($anonymous -eq "1" ) {$isAnonymous = $true};
+
+    $isSiteExist = Test-Path "IIS:\Sites\$siteName"
+
+    if ($isSiteExist -eq $false)
+    {
+      $reason = $reason + "site: [$siteName] not exists,"
+    }
+
+    $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool";
+
+    if ($isAppPoolExist -eq $false)
+    {
+      $reason = $reason + "AppPool: [$appPool] not exists,"
+    }
+
+    $isAppExist = Test-Path "IIS:\Sites\$siteName\$appName";
+
+    if ($isAppExist -eq $false)
+    { 
+      $reason = $reason + "app: [$appName] not exists,"
+    }
+
+    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $true) 
+    {
+      Set-ItemProperty "IIS:\Sites\$siteName\$appName" applicationPool $appPool
+      Set-ItemProperty "IIS:\Sites\$siteName\$appName" physicalPath $appFolder
+      $anonAuthFilter = "/system.WebServer/security/authentication/AnonymousAuthentication"
+      Set-WebConfigurationProperty -filter $anonAuthFilter -name Enabled -value $isAnonymous -location "IIS:\Sites\$website\$appName"
+      $isSuccess = $true
+    }
+    else
+    {
+      $reason = "can not set app:[$appName]," +  $reason;
+    }
+  }
+  catch
   {
-		Set-WebConfigurationProperty -filter $anonAuthFilter -name Enabled -value $value -location "IIS:\Sites\$website\$appName"
-		Write-Host "Anonymous Authentication now $value on $appName"
-	}
+    Write-Host "An error occurred:"
+    $reason = $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
+
 
 
 function Remove-Application 
 { 	
   param(
-    [string]$appName,
-    [string]$siteName
+    [string]$siteName,
+    [string]$appName
   )
-  
-  if ( (Test-Path "IIS:\Sites\$siteName\$appName") -eq $true ) 
+
+  $isSuccess = $false
+  $isSiteExist = $false
+  $isAppExist = $false
+  $reason = "";
+
+  try
   {
-		Remove-Item "IIS:\Sites\$siteName\$appName" -recurse
-		Write-Host "$appName removed"
-		#IIS:\>Remove-WebApplication -Name TestApp -Site "Default Web Site"
-	}
+    Import-Module WebAdministration
+
+    $isSiteExist = Test-Path "IIS:\Sites\$siteName"
+
+    if ($isSiteExist -eq $false)
+    {
+      $reason = $reason + "site: [$siteName] not exists,"
+    }
+
+    $isAppExist = Test-Path "IIS:\Sites\$siteName\$appName";
+
+    if ($isAppExist -eq $false)
+    { 
+      $reason = $reason + "app: [$appName] not exists,"
+    }
+
+    if ($isSiteExist -eq $true -and $isAppExist -eq $true) 
+    {
+      Remove-Item "IIS:\Sites\$siteName\$appName" -recurse
+      $isSuccess = $true
+    }
+    else
+    {
+      $reason = "can not set app:[$appName]," +  $reason;
+    }
+  }
+  catch
+  {
+    Write-Host "An error occurred:"
+    $reason = $_
+  }
+
+  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
 }
 
 function Enable-FormsAuthentication
@@ -719,6 +936,10 @@ function SiteMaintain ([PSCustomObject] $PSObject)
       3 #Get List
       {
         $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Get-Site-List}
+      }
+      4 #Set Bind
+      {
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-WebBinding} -ArgumentList ($param.siteName,$param.bindingList)
       }
   }
 

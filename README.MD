@@ -30,9 +30,17 @@ powershell.exe -noexit .\allFunction.ps1
 
 # Test
 
-## Remote test
+## Remote
 
-## Local test
+```bat
+
+```
+
+## Local
+
+```bat
+
+```
 
 # Command
 
