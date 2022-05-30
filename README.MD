@@ -32,14 +32,12 @@ powershell.exe -noexit .\allFunction.ps1
 
 ## Remote
 
-```bat
-
-```
 
 ## Local
 
 ```bat
-
+cd localtest
+powershell -command "& { .\application.ps1;{function} {site} {app} {path} {pool} {anonymous}}"
 ```
 
 # Command

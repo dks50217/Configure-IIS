@@ -24,13 +24,9 @@
   command
   EX: empty/0/1/2
 
-.PARAMETER mailFrom
-  Send Report Mail (From)
-  EX: mail
-
-.PARAMETER mailTo
-  Send Report Mail (To)
-  EX: mail,mail
+.PARAMETER param
+  params
+  EX: Json Format like {"siteName": "","appName":""}
 #>
 
 [CmdletBinding()]
@@ -47,10 +43,6 @@ Param(
     [string]$action = "",
     [string]$param = "" #Json Format like {"siteName": "","appName":""}
 )
-
-# if ((Get-Module "WebAdministration" -ErrorAction SilentlyContinue) -eq $null){
-# 	Import-Module WebAdministration
-# }
 
 # ConvertTo-Json -Depth Dic
 [hashtable]$depthDictionary = [ordered]@{
@@ -925,19 +917,17 @@ function SiteMaintain ([PSCustomObject] $PSObject)
       }
       1 
       {
-        #$bindingList = $param.bindingList | ConvertFrom-Json
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-New-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.netVersion,$param.enable32,$param.classicPipelineMode)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-New-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.autoStart,$param.preload)
       }
       2 
       {
-        #$bindingList = $param.bindingList | ConvertFrom-Json
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.netVersion,$param.enable32Bit,$param.classicPipelineMode,$param.isEnable)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.autoStart,$param.preload)
       }
       3 #Get List
       {
         $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Get-Site-List}
       }
-      4 #Set Bind
+      4 #Set Web Bind
       {
         $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-WebBinding} -ArgumentList ($param.siteName,$param.bindingList)
       }
@@ -956,19 +946,23 @@ function AppMaintain ([PSCustomObject] $PSObject)
   {
       0
       {
-        $rtnObj =  invoke-command -session $PSObject.session -scriptblock ${function:Remove-Application} -ArgumentList ($param.appName,$param.$siteName)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Remove-Application} -ArgumentList ($param.siteName, $param.appName)
       }
       1 
       {
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-New-Application} -ArgumentList ($param.appName,$param.appFolder,$param.appPool,$param.siteName)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-New-Application} -ArgumentList ($param.siteName,$param.appName,$param.appFolder,$param.appPool,$param.anonymous)
       }
       2 
       { 
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-Application} -ArgumentList ($param.appName,$param.appFolder,$param.appPool,$param.siteName,$param.isAnonymous)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-Application} -ArgumentList ($param.siteName,$param.appName,$param.appFolder,$param.appPool,$param.anonymous)
       }
       3 #Get List
       {
         $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Get-Application-List}
+      }
+      4 #Set WebVirtualDirectory
+      {
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-WebVirtualDirectory} -ArgumentList ($param.siteName, $param.appName, $param.dicList)
       }
   }
 
