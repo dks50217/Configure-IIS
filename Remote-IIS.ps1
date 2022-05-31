@@ -51,9 +51,11 @@ Param(
   Application3 = 3;
 }
 
+$isDebug = $false;
+
 function TestServerConnection([string] $server) 
 {
-    if (test-connection -ComputerName $server -Count 1 -ErrorAction SilentlyContinue ) 
+    if (test-connection -ComputerName $server -Count 1 -ErrorAction SilentlyContinue) 
     {
       return $true
     }
@@ -62,6 +64,7 @@ function TestServerConnection([string] $server)
       return $false
     }
 }
+
 
 function Set-Session
 {
@@ -77,7 +80,6 @@ function Set-Session
     }
     catch
     {
-       Write-Host "An error occurred:"
        $reason = $_
     }
 
@@ -89,6 +91,23 @@ function Set-Session
 
     return $rtnObj;
 }
+
+
+<#
+   This script will write json file log or write-host
+#>
+function Write-OutOrLog([string]$json,[string]$logPath)
+{
+  if ($isDebug)
+  {
+    $json | Set-Content -Encoding utf8 -Path $logPath
+  }
+  else
+  {
+    Write-Host $json #output for .NET
+  }
+}
+
 
 function Get-AppPoolList
 {
@@ -131,11 +150,10 @@ function Get-AppPoolList
   }
   Catch 
   {
-    Write-Host "An error occurred:";
     $reason = $_;
   }
   
-  New-Object -TypeName PSCustomObject -Property @{appPoolList=$appPoolList;options=$options;isSuccess=$isSuccess;reason=$reason};
+  New-Object -TypeName PSCustomObject -Property @{resultList=$appPoolList;options=$options;isSuccess=$isSuccess;reason=$reason};
 }
 
 function Get-Site-List
@@ -151,11 +169,10 @@ function Get-Site-List
   }
   catch
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{siteList=$siteList;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{resultList=$siteList;isSuccess=$isSuccess;reason=$reason}
 }
 
 function Get-Application-List
@@ -191,11 +208,10 @@ function Get-Application-List
   }
   catch
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{appList=$appList;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{resultList=$appList;isSuccess=$isSuccess;reason=$reason}
 }
 
 # New Server Open IIS
@@ -232,7 +248,6 @@ function Remove-Pool
   }
   catch 
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
@@ -300,7 +315,6 @@ function Create-New-Site
   }
   catch
   {
-    Write-Host "An error occurred:"
     Write-Host $reason = $_
   }
 
@@ -348,7 +362,6 @@ function Set-WebBinding
   }
   catch
   {
-    Write-Host "An error occurred:"
     Write-Host $reason = $_
   }
 
@@ -416,7 +429,6 @@ function Set-Site
   }
   catch
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
@@ -509,7 +521,6 @@ function Set-WebVirtualDirectory
     }
     catch
     {
-      Write-Host "An error occurred:"
       $reason = $_
     }
   
@@ -565,7 +576,6 @@ function Remove-Site
   }
   catch
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
@@ -587,6 +597,7 @@ function Create-New-Application
   $isSiteExist = $false
   $isAppExist = $false
   $isAppPoolExist = $false
+  $isPathExist = $false
   $isAnonymous = $false
   $reason = "";
 
@@ -618,7 +629,14 @@ function Create-New-Application
       $reason = $reason + "app: [$appName] already exists,"
     }
 
-    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $false) 
+    $isPathExist = Test-Path $appFolder
+
+    if ($isAppExist -eq $false)
+    { 
+      $reason = $reason + "appFolder: [$appFolder] not exists,"
+    }
+
+    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $false -and $isPathExist -eq $true) 
     {
       New-Item "IIS:\Sites\$siteName\$appName" -type Application -physicalpath $appFolder -ApplicationPool $appPool
       $anonAuthFilter = "/system.WebServer/security/authentication/AnonymousAuthentication"
@@ -627,12 +645,11 @@ function Create-New-Application
     }
     else
     {
-      $reason = "can not create app:[[$appName]," +  $reason;
+      $reason = "can not create app:[$appName]," +  $reason;
     }
   }
   catch
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
@@ -653,6 +670,7 @@ function Set-Application
   $isSiteExist = $false
   $isAppExist = $false
   $isAppPoolExist = $false
+  $isPathExist = $false
   $isAnonymous = $false
   $reason = "";
 
@@ -683,7 +701,14 @@ function Set-Application
       $reason = $reason + "app: [$appName] not exists,"
     }
 
-    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $true) 
+    $isPathExist = Test-Path $appFolder
+
+    if ($isPathExist -eq $false)
+    { 
+      $reason = $reason + "appFolder: [$appFolder] not exists,"
+    }
+
+    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $true -and $isPathExist -eq $true) 
     {
       Set-ItemProperty "IIS:\Sites\$siteName\$appName" applicationPool $appPool
       Set-ItemProperty "IIS:\Sites\$siteName\$appName" physicalPath $appFolder
@@ -698,7 +723,6 @@ function Set-Application
   }
   catch
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
@@ -749,7 +773,6 @@ function Remove-Application
   }
   catch
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
@@ -810,7 +833,6 @@ function Create-AppPool
   }
   catch
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
@@ -858,7 +880,6 @@ function Set-AppPool
   }
   catch
   {
-    Write-Host "An error occurred:"
     $reason = $_
   }
 
@@ -896,7 +917,7 @@ function AppPoolMaintain ([PSCustomObject] $PSObject)
       }
       3 #Get List
       {
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${functionGet-AppPoolList}
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Get-AppPoolList}
       }
   }
 
@@ -975,7 +996,10 @@ $testConn = TestServerConnection($server)
 
 if ($testConn -eq $false)
 {
-  $resultNOConnect = New-Object -TypeName PSCustomObject -Property @{isSuccess=$false;reason="$server not connect";} | ConvertTo-Json | Set-Content -Path $eventPath
+  $resultNOConnect = New-Object -TypeName PSCustomObject -Property @{isSuccess=$false;reason="$server not connect";} | ConvertTo-Json
+  
+  Write-OutOrLog -json $resultNOConnect -logPath $eventPath
+
   EXIT
 }
 
@@ -983,7 +1007,10 @@ $testSession = Set-Session
 
 if ($testSession.isSuccess -eq $false)
 {
-  $resultNOSession = New-Object -TypeName PSCustomObject -Property @{isSuccess=$false;reason=$testSession.reason;} | ConvertTo-Json | Set-Content -Path $eventPath
+  $resultNOSession = New-Object -TypeName PSCustomObject -Property @{isSuccess=$false;reason=$testSession.reason;} | ConvertTo-Json
+  
+  Write-OutOrLog -json $resultNOSession -logPath $eventPath
+
   EXIT
 }
 
@@ -1017,16 +1044,16 @@ if ($session)
   # Get ConvertJson level
   [int]$jsonDepth = 2;
   [string]$searchKey = "$command$action";
-  $foundKeys = $depthDictionary.Keys | % { if($_.contains($searchKey)){$_}}
+  $foundKeys = $depthDictionary.Keys | ForEach-Object { if($_.contains($searchKey)){$_}}
 
   if ($foundKeys)
   {
     $jsonDepth = $depthDictionary["$command$action"];
   }
 
-  $RealJsonObject =  $JsonObject | ConvertTo-Json -Depth $jsonDepth | Set-Content -Encoding utf8 -Path $eventPath
-
-  #Write-Host $RealJsonObject
+  $RealJsonObject =  $JsonObject | ConvertTo-Json -Depth $jsonDepth
+  
+  Write-OutOrLog -json $RealJsonObject -logPath $eventPath
 
   Remove-PSSession -Session $session
 

@@ -105,6 +105,7 @@ function Create-New-Application
   $isSiteExist = $false
   $isAppExist = $false
   $isAppPoolExist = $false
+  $isPathExist = $false
   $isAnonymous = $false
   $reason = "";
 
@@ -136,7 +137,14 @@ function Create-New-Application
       $reason = $reason + "app: [$appName] already exists,"
     }
 
-    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $false) 
+    $isPathExist = Test-Path $appFolder
+
+    if ($isAppExist -eq $false)
+    { 
+      $reason = $reason + "appFolder: [$appFolder] not exists,"
+    }
+
+    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $false -and $isPathExist -eq $true) 
     {
       New-Item "IIS:\Sites\$siteName\$appName" -type Application -physicalpath $appFolder -ApplicationPool $appPool
       $anonAuthFilter = "/system.WebServer/security/authentication/AnonymousAuthentication"
@@ -145,7 +153,7 @@ function Create-New-Application
     }
     else
     {
-      $reason = "can not create app:[[$appName]," +  $reason;
+      $reason = "can not create app:[$appName]," +  $reason;
     }
   }
   catch
@@ -164,14 +172,17 @@ function Set-Application
     [string]$appName,
     [string]$appFolder,
     [string]$appPool,
-    [string]$anonymous
+    [string]$anonymous,
+    [string]$formsAuth
   )
 
   $isSuccess = $false
   $isSiteExist = $false
   $isAppExist = $false
   $isAppPoolExist = $false
+  $isPathExist = $false
   $isAnonymous = $false
+  $isFormsAuth = $false
   $reason = "";
 
   try
@@ -179,10 +190,11 @@ function Set-Application
     Import-Module WebAdministration
 
     if ($anonymous -eq "1" ) {$isAnonymous = $true};
+    if ($formsAuth -eq "1" ) {$isFormsAuth = $true};
 
     $isSiteExist = Test-Path "IIS:\Sites\$siteName"
 
-    if ( $isSiteExist -eq $false)
+    if ($isSiteExist -eq $false)
     {
       $reason = $reason + "site: [$siteName] not exists,"
     }
@@ -201,17 +213,25 @@ function Set-Application
       $reason = $reason + "app: [$appName] not exists,"
     }
 
-    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $true) 
+    $isPathExist = Test-Path $appFolder
+
+    if ($isPathExist -eq $false)
+    { 
+      $reason = $reason + "appFolder: [$appFolder] not exists,"
+    }
+
+    if ($isSiteExist -eq $true -and $isAppPoolExist -eq $true -and $isAppExist -eq $true -and $isPathExist -eq $true) 
     {
       Set-ItemProperty "IIS:\Sites\$siteName\$appName" applicationPool $appPool
       Set-ItemProperty "IIS:\Sites\$siteName\$appName" physicalPath $appFolder
       $anonAuthFilter = "/system.WebServer/security/authentication/AnonymousAuthentication"
       Set-WebConfigurationProperty -filter $anonAuthFilter -name Enabled -value $isAnonymous -location "IIS:\Sites\$website\$appName"
+      Set-WebConfiguration "system.web/authentication" Enabled -value $isFormsAuth
       $isSuccess = $true
     }
     else
     {
-      $reason = "can not set app:[[$appName]," +  $reason;
+      $reason = "can not set app:[$appName]," +  $reason;
     }
   }
   catch
@@ -277,8 +297,7 @@ function Remove-Application
 #Set-WebVirtualDirectory "Default Web Site" "testapp" $dicJsonList
 
 #Create-New-Application "Default Web Site" "testapp2" "D:\Demo_Web\cardSample" "michaelPool" "1"
-
-#Set-Application "Default Web Site2" "testapp3" "D:\Demo_Web\Chartjs" "CRM_EXCEL123" "1"
+Set-Application "Default Web Site" "testapp" "D:\Demo_Web\Chartjs" "CRM_EXCEL" "1" "1"
 
 #Remove-Application "Default Web Site" "testapp2"
 
