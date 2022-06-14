@@ -46,6 +46,7 @@ Param(
 
 # ConvertTo-Json -Depth Dic
 [hashtable]$depthDictionary = [ordered]@{
+  AppPool1 = 2;
   AppPool3 = 4;
   Site3 = 5;
   Application3 = 3;
@@ -164,7 +165,15 @@ function Get-Site-List
   try 
   {
     Import-Module WebAdministration; 
+    
     $siteList = get-website | Select-Object id,name,state,applicationPool,physicalPath,bindings,enabledProtocols,serverAutoStart
+    
+    $booleanOptions = @( @{ label="Y"; value="1";}, @{ label="N"; value="0"; } )
+
+    $options = @{
+      boolean = $booleanOptions
+    }
+    
     $isSuccess = $true;
   }
   catch
@@ -172,13 +181,13 @@ function Get-Site-List
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{resultList=$siteList;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{resultList=$siteList;options=$options;isSuccess=$isSuccess;reason=$reason}
 }
 
 function Get-Application-List
 {
   param (
-    [string]$siteName
+    [string]$siteName = "CRM_Portal_WebForm"
   )
 
   $isSuccess = $false
@@ -202,6 +211,13 @@ function Get-Application-List
           $appItem | Add-Member -MemberType NoteProperty -Name "VirtualDiretoryPath" -Value $virtualList
         }
       }
+
+      # AddSiteName
+      $appItem | Add-Member -MemberType NoteProperty -Name "site" -Value $siteName
+
+      #Add auth
+      $auth = Get-WebConfigurationProperty -filter "system.webServer/security/authentication/anonymousAuthentication" -PSPath "IIS:\Sites\$siteName\$appName" -name enabled.value;
+      $appItem | Add-Member -MemberType NoteProperty -Name "authentication" -Value $auth;
     }
     
     $isSuccess = $true;
@@ -251,7 +267,7 @@ function Remove-Pool
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 #get-website | Select-Object id,name,state,applicationPool,physicalPath,bindings,enabledProtocols,serverAutoStart
@@ -318,7 +334,7 @@ function Create-New-Site
     Write-Host $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 function Set-WebBinding
@@ -432,7 +448,7 @@ function Set-Site
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 function Set-WebVirtualDirectory 
@@ -524,7 +540,7 @@ function Set-WebVirtualDirectory
       $reason = $_
     }
   
-    New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+    New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 
@@ -579,7 +595,7 @@ function Remove-Site
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 
@@ -653,7 +669,7 @@ function Create-New-Application
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 function Set-Application 
@@ -726,7 +742,7 @@ function Set-Application
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 
@@ -776,7 +792,7 @@ function Remove-Application
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 function Enable-FormsAuthentication
@@ -823,7 +839,6 @@ function Create-AppPool
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedpipelinemode $managedpipelinemode
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" autoStart $isAutoStart
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" enable32BitAppOnWin64 $isEnable32BitApp
-       $result = Get-ChildItem -Path "IIS:\AppPools\$appPool" | Select-Object name, state, managedRuntimeVersion, managedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64
        $isSuccess = $true
     }
     else
@@ -836,7 +851,7 @@ function Create-AppPool
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 function Set-AppPool
@@ -883,7 +898,7 @@ function Set-AppPool
     $reason = $_
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 #CSharp CSHelper call Bridge test
@@ -905,7 +920,7 @@ function AppPoolMaintain ([PSCustomObject] $PSObject)
   {
       0 
       {
-        $rtnObj =  invoke-command -session $PSObject.session -scriptblock ${function:Remove-Pool} -ArgumentList ($param.appPool)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Remove-Pool} -ArgumentList ($param.appPool)
       }
       1 
       {
@@ -921,6 +936,7 @@ function AppPoolMaintain ([PSCustomObject] $PSObject)
       }
   }
 
+  if ($rtnObj -is [array]) {return $rtnObj[1]}
   return $rtnObj;
 }
 
@@ -954,6 +970,7 @@ function SiteMaintain ([PSCustomObject] $PSObject)
       }
   }
 
+  if ($rtnObj -is [array]) {return $rtnObj[1]}
   return $rtnObj;
 }
 
@@ -979,7 +996,7 @@ function AppMaintain ([PSCustomObject] $PSObject)
       }
       3 #Get List
       {
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Get-Application-List}
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Get-Application-List} -ArgumentList ($param.siteName)
       }
       4 #Set WebVirtualDirectory
       {
@@ -987,6 +1004,7 @@ function AppMaintain ([PSCustomObject] $PSObject)
       }
   }
 
+  if ($rtnObj -is [array]) {return $rtnObj[1]}
   return $rtnObj;
 }
 
