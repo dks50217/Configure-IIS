@@ -4,4 +4,5 @@ powershell.exe -noexit .\Remote-IIS.ps1 ^
 -password %password% ^
 -server %server% ^
 -command %command% ^
--action %action%
+-action %action% ^
+-param %param%

@@ -74,14 +74,14 @@ function Set-Session
     
     try
     {
-      $securePassword = ConvertTo-SecureString $password -AsPlainText -force
+      $securePassword = ConvertTo-SecureString $password -AsPlainText -force 
       $cred = New-Object System.Management.Automation.PsCredential("PEGA\$($user)",$securePassword)
       $session = New-PSSession -computername $server -credential $cred -EA Stop
       $isSuccess = $true
     }
     catch
     {
-       $reason = $_
+       $reason = $_.Exception.Message;
     }
 
     $rtnObj = @{
@@ -170,8 +170,13 @@ function Get-Site-List
     
     $booleanOptions = @( @{ label="Y"; value="1";}, @{ label="N"; value="0"; } )
 
+    $appPoolList = Get-ChildItem -Path IIS:\AppPools\  | Select-Object name
+
+    $appPoolOptions  = $appPoolList | Select-Object -property @{N='label';E={$_.name}}, @{N='value';E={$_.name}}
+    
     $options = @{
       boolean = $booleanOptions
+      appPool = $appPoolOptions
     }
     
     $isSuccess = $true;
@@ -277,15 +282,13 @@ function Create-New-Site
     [string]$siteName, 
     [string]$siteFolder,
     [string]$appPool,
-    [string]$autoStart,
-    [string]$preload
+    [string]$autoStart
   )
 
   $isSuccess = $false
   $isSiteExist = $false
   $isFolderExist = $false
   $isAutoStart = $false
-  $isPreLoad = $false
   $isAppPoolExist = $false
   $reason = "";
 
@@ -313,7 +316,6 @@ function Create-New-Site
     }
 
     if ($autoStart -eq "1" ) {$isAutoStart = $true};
-    if ($preload -eq "1" ) {$isPreLoad = $true};
 
     $readyCreate = ($isSiteExist -eq $false) -and ($isFolderExist -eq $true) -and ($isAppPoolExist -eq $true)
 
@@ -321,7 +323,6 @@ function Create-New-Site
     {
       $result = New-Website -Name $siteName -ApplicationPool $appPool -PhysicalPath $siteFolder
       Set-ItemProperty "IIS:\Sites\$siteName" serverAutoStart $isAutoStart
-      Set-ItemProperty "IIS:\Sites\$siteName" applicationDefaults.preloadEnabled $isPreLoad
       $isSuccess = $true;
     }
     else
@@ -341,47 +342,64 @@ function Set-WebBinding
 {
   param(
     [string]$siteName,
-    [string]$bindingJsonList
+    [string]$bindingList
   )
 
   $isSuccess = $false;
   $reason = "";
   $result = New-Object -TypeName 'System.Collections.ArrayList';
+  $isSiteExist = $false;
+  $readySet = $false;
 
   try
   {
-    #Convert To PSObject
-    $bindingList = $bindingJsonList | ConvertFrom-Json
-     
-    #Remove all
-    $orgBindingList = Get-WebBinding $siteName |Select-Object -ExpandProperty bindingInformation
-
-    foreach ($item in $orgBindingList)
-    {
-      $orgIP = $item.split(':')[0];
-      Get-WebBinding -Port $orgIP -Name $siteName | Remove-WebBinding;
-    }
+    Import-Module WebAdministration;
     
-    #Create all  
-    foreach ($item in $bindingList)
+    $isSiteExist = Test-Path "IIS:\Sites\$siteName";
+
+    if ($isSiteExist -eq $false)
     {
-      $bindObject = [PSCustomObject]@{
-        ip =$item.ip
-        port = $item.port
-        header = $item.header
-      };
-      New-WebBinding -Name $siteName -IPAddress $item.ip -Port $item.port -HostHeader $item.header  
-      $result.Add($bindObject);
+       $reason = $reason + "site: [$siteName] is not exist"
     }
 
-    $isSuccess = $true;
+    $readySet = $isSiteExist -eq $true;
+
+    if ($readySet)
+    {
+        #Remove all
+        $orgBindingList = Get-WebBinding $siteName |Select-Object -ExpandProperty bindingInformation
+
+        foreach ($item in $orgBindingList)
+        {
+          $orgIP = $item.split(':')[0];
+          Get-WebBinding -Port $orgIP -Name $siteName | Remove-WebBinding;
+        }
+        
+        # #Create all  
+        $list = $bindingList.split(';');
+
+        foreach ($row in $list)
+        {
+            if ($row)
+            {
+                $infoArray = $row.split(':');
+                New-WebBinding -Name $siteName -IPAddress $infoArray[0] -Port $infoArray[1] -HostHeader $infoArray[2];
+            }
+        }
+
+        $isSuccess = $true;
+    }
+    else
+    {
+      $reason = "set web-bind site: [$siteName] fail," + $reason;
+    }
   }
   catch
   {
-    Write-Host $reason = $_
+    $reason = $bindingList
   }
 
-  New-Object -TypeName PSCustomObject -Property @{result=$result;isSuccess=$isSuccess;reason=$reason}
+  New-Object -TypeName PSCustomObject -Property @{isSuccess=$isSuccess;reason=$reason}
 }
 
 function Set-Site
@@ -391,15 +409,15 @@ function Set-Site
     [string]$siteFolder,
     [string]$appPool,
     [string]$autoStart,
-    [string]$preload
+    [string]$enable
   )
 
   $isSuccess = $false
   $isSiteExist = $false
   $isFolderExist = $false
   $isAutoStart = $false
-  $isPreLoad = $false
   $isAppPoolExist = $false
+  $isEnable = $false
   $reason = "";
 
   try
@@ -426,7 +444,7 @@ function Set-Site
     }
 
     if ($autoStart -eq "1" ) {$isAutoStart = $true};
-    if ($preload -eq "1" ) {$isPreLoad = $true};
+    if ($enable -eq "1") {$isEnable = $true};
 
     $readySet = ($isSiteExist -eq $true) -and ($isFolderExist -eq $true) -and ($isAppPoolExist -eq $true)
     
@@ -435,7 +453,16 @@ function Set-Site
       Set-ItemProperty "IIS:\Sites\$siteName" ApplicationPool $appPool
       Set-ItemProperty "IIS:\Sites\$siteName" PhysicalPath $siteFolder
       Set-ItemProperty "IIS:\Sites\$siteName" serverAutoStart $isAutoStart
-      Set-ItemProperty "IIS:\Sites\$siteName" applicationDefaults.preloadEnabled $isPreLoad
+
+      if ($isEnable)
+      {
+          Start-Website -Name $siteName
+      }
+      else
+      {
+          Stop-Website -Name $siteName
+      }
+      
       $isSuccess = $true;
     }
     else
@@ -573,12 +600,12 @@ function Remove-Site
         $existAppCount = (Get-ChildItem "IIS:\Sites\$siteName").count;
     }
 
-    if ($existAppCount -gt 1)
+    if ($existAppCount -gt 0)
     {
        $reason = $reason + "can't remove site: [$siteName], because app exists, count : [$existAppCount],"
     }
 
-    $readyRemove = ($isSiteExist -eq $true) -and ($existAppCount -eq 1)
+    $readyRemove = ($isSiteExist -eq $true) -and ($existAppCount -eq 0)
 
     if ($readyRemove)
     {
@@ -861,13 +888,16 @@ function Set-AppPool
     [string]$netVersion,
     [string]$managedpipelinemode,
     [string]$autoStart,
-    [string]$enable32
+    [string]$enable32,
+    [string]$enable
   )
 
   $isSuccess = $false
   $isAppPoolExist = $false
   $isEnable32BitApp = $false
   $isAutoStart = $false
+  $isEnable = $false
+  $pipelinemode = 0 #Integrated	0
   $reason = "";
 
   try
@@ -878,14 +908,29 @@ function Set-AppPool
     $isAppPoolExist = Test-Path "IIS:\AppPools\$appPool"
     if ($autoStart -eq "1" ) {$isAutoStart = $true};
     if ($enable32 -eq "1" ) {$isEnable32BitApp = $true};
+    if ($enable -eq "1" ) {$isEnable = $true};
+    if ($managedpipelinemode -eq "Classic") {$pipelinemode = 1};
 
     if ($isAppPoolExist -eq $true)
     {
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedRuntimeVersion $netVersion
-       Set-ItemProperty -Path "IIS:\AppPools\$appPool" managedpipelinemode $managedpipelinemode
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" autoStart $isAutoStart
        Set-ItemProperty -Path "IIS:\AppPools\$appPool" enable32BitAppOnWin64 $isEnable32BitApp
-       $result = Get-ChildItem -Path "IIS:\AppPools\$appPool" | Select-Object name, state, managedRuntimeVersion, managedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64
+
+      #powershell bug，set managedPipelineMode need get apppool
+      $pipAppool = Get-Item ("IIS:\AppPools\$appPool")
+      $pipAppool | Set-ItemProperty -Name "managedPipelineMode" -Value $pipelinemode
+       
+       if ($isEnable)
+       {
+          Start-WebAppPool -Name $appPool
+       }
+       else
+       {
+          Stop-WebAppPool -Name $appPool
+       }
+
+       #$result = Get-ChildItem -Path "IIS:\AppPools\$appPool" | Select-Object name, state, managedRuntimeVersion, managedPipelineMode,AutoStart,StartMode,Enable32BitAppOnWin64
        $isSuccess = $true
     }
     else
@@ -928,7 +973,7 @@ function AppPoolMaintain ([PSCustomObject] $PSObject)
       }
       2 
       { 
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-AppPool} -ArgumentList ($param.appPool,$param.netVersion,$param.managedpipelinemode,$param.autoStart,$param.enable32)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-AppPool} -ArgumentList ($param.appPool,$param.netVersion,$param.managedpipelinemode,$param.autoStart,$param.enable32,$param.enable)
       }
       3 #Get List
       {
@@ -954,11 +999,11 @@ function SiteMaintain ([PSCustomObject] $PSObject)
       }
       1 
       {
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-New-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.autoStart,$param.preload)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Create-New-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.autoStart)
       }
       2 
       {
-        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.autoStart,$param.preload)
+        $rtnObj = invoke-command -session $PSObject.session -scriptblock ${function:Set-Site} -ArgumentList ($param.siteName,$param.siteFolder,$param.appPool,$param.autoStart,$param.enable)
       }
       3 #Get List
       {
