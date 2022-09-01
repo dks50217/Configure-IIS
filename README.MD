@@ -1,6 +1,6 @@
 # Configure-IIS
 
-use powershell cmdlets to configure IIS configuration settings
+use powershell cmdlets to remote configure IIS configuration settings
 
 # How to use
 
